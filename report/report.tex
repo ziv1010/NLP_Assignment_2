@@ -1,0 +1,330 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{xcolor}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+
+\title{Hindi NLP Assignment Report\\Word Vectors + LSTM Classification}
+\author{NLP A2 Submission}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Objective}
+The assignment required two tasks:
+\begin{enumerate}[leftmargin=1.5em]
+    \item Build Hindi word vectors and compare them with provided pretrained vectors.
+    \item Build an LSTM-based Hindi news classifier using the BBC Hindi dataset.
+\end{enumerate}
+After the instructor updates, the final required resources were:
+\begin{itemize}[leftmargin=1.5em]
+    \item Pretraining corpus: \texttt{ai4bharat/sangraha} with \texttt{data\_dir="verified/hin"}.
+    \item Vector comparison baseline: Common Crawl Hindi fastText vectors (\texttt{cc.hi.300.vec}).
+\end{itemize}
+
+\section{Data and Resources Used}
+\subsection{Pretraining Corpus}
+\begin{itemize}[leftmargin=1.5em]
+    \item Source recorded in \texttt{data/corpus/corpus\_meta.json}: \texttt{ai4bharat/sangraha (verified/hin, streaming)}.
+    \item Target documents requested: 200,000.
+    \item Collected documents: 196,549.
+    \item Raw text line count in file: 1,565,935 (\texttt{data/corpus/hindi\_corpus.txt}).
+    \item Cleaned line count: 1,359,186 (\texttt{data/corpus/hindi\_corpus\_clean.txt}).
+\end{itemize}
+
+\subsection{Pretrained Comparison Vectors}
+\begin{itemize}[leftmargin=1.5em]
+    \item Common Crawl Hindi fastText file: \texttt{models/pretrained/cc.hi.300.vec}.
+    \item For memory/runtime balance, top 400,000 vectors were loaded during comparison/training.
+\end{itemize}
+
+\subsection{Classification Dataset}
+\begin{itemize}[leftmargin=1.5em]
+    \item File: \texttt{bbc\_hindi\_articles\_with\_categories\_cleaned.csv}.
+    \item Valid classes used: 6 (Khel, Bharat, Manoranjan, Vigyan, Videsh, Social).
+    \item After cleaning/length filtering: 4,790 samples.
+    \item Split sizes (\texttt{data/bbc\_hindi/processed/dataset\_summary.csv}):\\
+    Train 3,353, Val 718, Test 719.
+\end{itemize}
+
+\section{Detailed Workflow and Implementation}
+
+\subsection{Step 1: Corpus Acquisition}
+This step handles the downloading of the Hindi corpus from the AI4Bharat Sangraha dataset. We upgraded the download logic to prioritize the Sangraha source and handle the specific directory structure (\texttt{verified/hin}).
+
+The implementation includes the following key features:
+\begin{itemize}
+    \item \textbf{Source Prioritization}: The script explicitly targets the 'ai4bharat/sangraha' dataset, which provides high-quality, verified Hindi text data.
+    \item \textbf{Directory Handling}: It correctly navigates the Hugging Face dataset structure, specifically looking for files within the 'verified/hin' directory to ensure we only download relevant Hindi content.
+    \item \textbf{Streaming and Fallback}: The download process uses streaming to handle large files efficiently. It also includes robust error handling to manage potential API issues or network interruptions, ensuring the download can be retried or fail gracefully.
+    \item \textbf{Metadata Logging}: Download metadata, including source and timestamp, is logged to \texttt{corpus\_meta.json} for reproducibility.
+\end{itemize}
+
+\subsection{Step 2: Corpus Preprocessing}
+The raw corpus requires significant cleaning to be suitable for training word vectors. Our preprocessing pipeline ensures that the text is clean, normalized, and tokenized correctly for Hindi.
+
+The preprocessing steps are as follows:
+\begin{enumerate}
+    \item \textbf{Noise Removal}: We remove URLs, email addresses, and HTML tags using regular expressions to clean the raw text.
+    \item \textbf{Character Filtering}: The script filters out non-Hindi characters while preserving Devanagari script (Unicode range \texttt{\textbackslash u0900-\textbackslash u097F}), common digits, and essential punctuation marks (danda, question mark, etc.). This removes noise from other languages or special symbols.
+    \item \textbf{Tokenization}: We perform whitespace-based tokenization, which is appropriate for Hindi. Punctuation is treated as separate tokens or removed depending on the context.
+    \item \textbf{Quality Filtering}: Lines with fewer than 5 tokens are discarded as they lack sufficient context for training meaningful word embeddings.
+    \item \textbf{Deduplication}: Identical lines are removed to prevent the model from overfitting to repetitive text and to ensure a diverse training set.
+\end{enumerate}
+
+\subsection{Step 3: Word Vector Training}
+We train two custom word embedding models: Word2Vec (Skip-gram) and FastText. Both are trained with a dimensionality of 300 to match the comparison baseline.
+
+The training process involves:
+\begin{itemize}
+    \item \textbf{Model Initialization}: We utilize the Gensim library to initialize Word2Vec and FastText models.
+    \item \textbf{Hyperparameters}: Both models are configured with a vector size of 300, a window size of 5 (looking at 5 words before and after the target), and a minimum count of 5 (ignoring rare words). We use the Skip-gram architecture as it generally performs better for semantic tasks.
+    \item \textbf{Training Data}: To balance performance and training time on local hardware, we use a large filtered subset of the preprocessed corpus (approx. 400,000 lines).
+    \item \textbf{Output}: The trained models are saved to disk along with their key vectors for efficient loading in subsequent steps.
+\end{itemize}
+
+\subsection{Step 4: Downloading Pretrained Vectors}
+We download the Common Crawl Hindi fastText vectors (\texttt{cc.hi.300.vec}) to serve as a strong baseline for comparison. This allows us to evaluate the quality of our custom-trained vectors against a standard, large-scale open-source model. The script checks for the existence of the file and downloads/unzips it only if necessary.
+
+\subsection{Step 5: Vector Comparison}
+We compare our custom models (FastText, Word2Vec) against the pretrained Common Crawl vectors across several dimensions to assess their quality.
+
+The comparison includes:
+\begin{enumerate}
+    \item \textbf{Vocabulary Overlap}: We calculate the intersection of vocabularies between our custom models and the pretrained model to understand coverage.
+    \item \textbf{Word Similarity}: We compute cosine similarity for a fixed set of word pairs (e.g., "king"-"queen", "India"-"Delhi") to verify that semantic relationships are captured.
+    \item \textbf{Analogy Tests}: We perform standard analogy tests (e.g., "King" - "Man" + "Woman" = ?) to evaluate the models' ability to capture algebraic relationships in the vector space.
+    \item \textbf{Visualizations}:
+        \begin{itemize}
+            \item \textbf{Word Similarity Plot}: Figure \ref{fig:similarity} shows the similarity scores of different models on standard pairs.
+            \item \textbf{t-SNE Projection}: We use t-SNE to reduce the 300-dimensional vectors to 2 dimensions for visualization (Figure \ref{fig:tsne}), allowing us to see clusters of semantically related words.
+        \end{itemize}
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../outputs/word_vectors/word_similarity_comparison.png}
+    \caption{Word Similarity Comparison across Models}
+    \label{fig:similarity}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../outputs/word_vectors/tsne_comparison.png}
+    \caption{t-SNE Projection of Word Vectors}
+    \label{fig:tsne}
+\end{figure}
+
+\subsection{Step 6: Classification Data Preparation}
+We prepare the BBC Hindi news dataset for the LSTM model. This involves cleaning the text, label encoding the categories, and creating a stratified train/val/test split.
+
+The preparation process includes:
+\begin{itemize}
+    \item \textbf{Data Loading}: The script reads the raw CSV containing BBC Hindi articles and their categories.
+    \item \textbf{Category Filtering}: We filter the dataset to include only valid categories: Khel (Sports), Bharat (India), Manoranjan (Entertainment), Vigyan (Science), Videsh (International), and Social.
+    \item \textbf{Text Cleaning}: We apply the same cleaning pipeline as used for the corpus (removing HTML, non-Hindi chars) to ensure consistency.
+    \item \textbf{Label Encoding}: Text labels are converted to integer IDs for the model.
+    \item \textbf{Stratified Split}: We use `StratifiedShuffleSplit` to split the data into training (70\%), validation (15\%), and test (15\%) sets, ensuring that the class distribution is preserved in each split.
+    \item \textbf{Vocabulary Building}: A vocabulary mapping (word to integer index) is built from the training data to be used by the embedding layer.
+\end{itemize}
+
+\subsection{Step 7: LSTM Model Architecture}
+We design a Bidirectional LSTM model with an attention mechanism for text classification.
+
+The model architecture consists of:
+\begin{enumerate}
+    \item \textbf{Embedding Layer}: This layer converts integer word indices into dense 300-dimensional vectors. It can be initialized with our custom Word2Vec/FastText vectors, the pretrained Common Crawl vectors, or random weights.
+    \item \textbf{Bidirectional LSTM}: We use a 2-layer BiLSTM. Bidirectionality allows the model to capture context from both past and future words, which is crucial for understanding sentence semantics.
+    \item \textbf{Attention Mechanism}: An attention layer is added on top of the LSTM outputs. This computes a weighted sum of the hidden states, allowing the model to focus on the most relevant parts of the document for the classification task.
+    \item \textbf{Classifier}: The output of the attention layer is passed through a fully connected (Linear) layer followed by a LogSoftmax activation to produce class probabilities.
+\end{enumerate}
+
+\subsection{Step 8: Model Training}
+We train the LSTM model variants using the different embedding initializations.
+
+Key aspects of the training loop:
+\begin{itemize}
+    \item \textbf{Loss Function}: We use `NLLLoss` (Negative Log Likelihood Loss) with class weights. The weights are inversely proportional to class frequencies to penalize errors on minority classes (like 'Social') more heavily, addressing class imbalance.
+    \item \textbf{Optimizer}: The Adam optimizer is used for efficient gradient descent.
+    \item \textbf{Training Loop}: The model is trained for a fixed number of epochs. In each epoch, we iterate through batches of data, compute gradients, and update weights.
+    \item \textbf{Validation and Early Stopping}: After each epoch, we evaluate the model on the validation set. If the validation loss does not improve for a set number of epochs (patience), training is stopped early to prevent overfitting.
+\end{itemize}
+
+Figure \ref{fig:training_curves} compares the training progression of the different models.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../outputs/classification/training_curves_comparison.png}
+    \caption{Training Curves Comparison}
+    \label{fig:training_curves}
+\end{figure}
+
+\subsection{Step 9: Evaluation}
+Finally, we evaluate all model variants on the test set to verify their performance.
+
+Evaluation involves:
+\begin{itemize}
+    \item \textbf{Metrics}: We calculate overall Accuracy, Macro F1-score (to account for class imbalance), and weighted F1-score.
+    \item \textbf{Confusion Matrices}: We generate confusion matrices for each model to visualize which classes are being confused. For example, similar topics like 'Bharat' and 'Social' might have higher confusion.
+    \item \textbf{Comparison}: We aggregate the results to determine which embedding initialization strategy yields the best performance on this dataset.
+\end{itemize}
+
+Figures \ref{fig:cm_custom}, \ref{fig:cm_baselines}, and \ref{fig:model_comparison} visualize these results.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.49\textwidth]{../outputs/classification/confusion_matrix_word2vec.png}
+    \includegraphics[width=0.49\textwidth]{../outputs/classification/confusion_matrix_fasttext.png}
+    \caption{Confusion Matrices: Word2Vec (Left) vs FastText (Right)}
+    \label{fig:cm_custom}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.49\textwidth]{../outputs/classification/confusion_matrix_cc_pretrained.png}
+    \includegraphics[width=0.49\textwidth]{../outputs/classification/confusion_matrix_random.png}
+    \caption{Confusion Matrices: CC Pretrained (Left) vs Random (Right)}
+    \label{fig:cm_baselines}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../outputs/classification/model_comparison.png}
+    \caption{Overall Model Comparison (Accuracy and F1 Scores)}
+    \label{fig:model_comparison}
+\end{figure}
+
+\section{Methodology}
+\subsection{Word Vector Training}
+\begin{itemize}[leftmargin=1.5em]
+    \item Algorithms: FastText and Word2Vec (gensim).
+    \item Hyperparameters: dimension 300, window 5, min\_count 5, skip-gram, 5 epochs.
+    \item Custom vocabulary size after training: 90,211 for both models.
+\end{itemize}
+
+\subsection{LSTM Classification}
+\begin{itemize}[leftmargin=1.5em]
+    \item Architecture: Embedding -> BiLSTM (2 layers, hidden 128, dropout 0.3) -> Attention -> MLP classifier.
+    \item Max sequence length: 256 tokens.
+    \item Batch size: 64, learning rate: \(1\times10^{-3}\), early stopping enabled.
+    \item Class imbalance handling: weighted cross-entropy.
+    \item Embedding sources compared:
+    \begin{itemize}[leftmargin=1.5em]
+        \item Custom FastText
+        \item Custom Word2Vec
+        \item Common Crawl pretrained vectors
+        \item Random initialization (baseline)
+    \end{itemize}
+\end{itemize}
+
+\section{Results}
+\subsection{Word Vector Comparison}
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Model & Vocab Size & Avg Pair Similarity & Analogy Hits (out of 5) \\
+\midrule
+FastText (custom) & 90,211 & 0.5749 & 1 \\
+Word2Vec (custom) & 90,211 & 0.5477 & 1 \\
+CC Hindi (pretrained) & 400,000 (loaded) & 0.5738 & 2 \\
+\bottomrule
+\end{tabular}
+\caption{Word vector summary from \texttt{outputs/word\_vectors/comparison\_report.json}.}
+\end{table}
+
+Additional overlap results:
+\begin{itemize}[leftmargin=1.5em]
+    \item Custom FastText \(\cap\) Custom Word2Vec: 90,211.
+    \item Custom FastText \(\cap\) CC Hindi: 76,759.
+    \item Custom Word2Vec \(\cap\) CC Hindi: 76,759.
+\end{itemize}
+
+\subsection{LSTM Classification Comparison}
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Embedding Type & Accuracy & Macro F1 & Weighted F1 \\
+\midrule
+Word2Vec & 0.6231 & 0.6107 & 0.6167 \\
+FastText & 0.5841 & 0.5697 & 0.5859 \\
+Random & 0.5716 & 0.5532 & 0.5608 \\
+CC Pretrained & 0.5160 & 0.4789 & 0.5089 \\
+\bottomrule
+\end{tabular}
+\caption{Classification metrics from \texttt{outputs/classification/evaluation\_report.json}.}
+\end{table}
+
+Best model: \textbf{Word2Vec embeddings} (Accuracy 62.31\%, Macro F1 0.6107).
+
+\subsection{Per-Class Behavior (Best Model: Word2Vec)}
+\begin{itemize}[leftmargin=1.5em]
+    \item Strong classes: Manoranjan (F1 0.775), Khel (F1 0.742).
+    \item Mid classes: Videsh (F1 0.586), Vigyan (F1 0.570).
+    \item Weak classes: Bharat (F1 0.497), Social (F1 0.494).
+\end{itemize}
+
+\section{Difficulties Encountered}
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Data source changes}: Original IndicCorp route was deprecated; pipeline had to be adapted to Sangraha.
+    \item \textbf{HuggingFace API compatibility}: Older call patterns failed; loader needed updates and fallback safety.
+    \item \textbf{Compute constraints}: Full 300d training on all cleaned lines was too slow for laptop runtime; a filtered large subset (400k lines) was used.
+    \item \textbf{Large pretrained files}: Common Crawl vectors are large (multi-GB), so loading all vectors at once was not practical.
+    \item \textbf{Rendering issues}: Devanagari plotting fonts produced warnings in some matplotlib environments.
+\end{enumerate}
+
+\section{Why the Model Performance Is Not Higher}
+The classifier works but does not reach very high performance. Main reasons:
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Class imbalance}: Social class is much smaller (only 46 test samples), which hurts stable learning and macro F1.
+    \item \textbf{Very long documents}: Average article length is around 1,040 tokens, but model input is truncated to 256 tokens, losing context.
+    \item \textbf{Simple preprocessing/tokenization}: Whitespace tokenization for Hindi keeps many spelling/morphology variants separate.
+    \item \textbf{Domain/style mismatch}: Common Crawl vectors are broad web text, not specifically tuned to BBC article style.
+    \item \textbf{Model capacity limits}: A BiLSTM with static embeddings is weaker than modern transformer approaches for long, nuanced text.
+\end{enumerate}
+
+\section{Conclusion}
+The assignment requirements were implemented with the updated instructor constraints:
+\begin{itemize}[leftmargin=1.5em]
+    \item Sangraha corpus used for custom Hindi vector training.
+    \item Common Crawl Hindi vectors used for required comparison.
+    \item LSTM-based classification completed with multi-embedding comparison and evaluation artifacts.
+\end{itemize}
+
+Current best result is the Word2Vec-initialized LSTM. The main path to better performance is handling long-document context and class imbalance more effectively (for example, larger max length with hierarchical modeling, improved Hindi normalization, and transformer-based fine-tuning).
+
+\end{document}

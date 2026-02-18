@@ -1,0 +1,10 @@
+torch
+gensim
+datasets
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+tqdm
+indic-nlp-library
